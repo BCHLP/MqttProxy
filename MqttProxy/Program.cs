@@ -14,7 +14,7 @@ mqttServer.InterceptingPublishAsync += async args =>
     // transmitting is not supported and makes no sense at all.
     // args.ApplicationMessage.Topic += "/manipulated";
 
-    Console.WriteLine(args.ApplicationMessage.Payload);
+    Console.WriteLine(args.ApplicationMessage.ConvertPayloadToString());
 
     //if (args.ClientId != "test-server")
     //{
