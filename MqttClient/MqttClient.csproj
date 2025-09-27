@@ -9,13 +9,5 @@
 
   <ItemGroup>
     <PackageReference Include="MQTTnet" Version="5.0.1.1416" />
-    <PackageReference Include="MQTTnet.Server" Version="5.0.1.1416" />
-    <PackageReference Include="System.Management" Version="8.0.0" />
-  </ItemGroup>
-  <ItemGroup>
-    <None Remove="certs\" />
-  </ItemGroup>
-  <ItemGroup>
-    <Folder Include="certs\" />
   </ItemGroup>
 </Project>
