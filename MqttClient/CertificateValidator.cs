@@ -3,7 +3,7 @@ using System.Text;
 
 class CertificateValidator
 {
-    void Main(string[] args)
+    public void Main()
     {
         Console.WriteLine("=== Certificate Chain Validator ===");
         Console.WriteLine("This tool helps debug certificate issues in your MQTT setup");

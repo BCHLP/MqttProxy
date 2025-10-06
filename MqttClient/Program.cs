@@ -1,8 +1,10 @@
 ﻿using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
+using Newtonsoft.Json;
 using MQTTnet;
 using MQTTnet.Protocol;
+using MqttClient;
 
 class Program
 {
@@ -10,8 +12,13 @@ class Program
 
     static async Task Main(string[] args)
     {
+        string secret = "XTCRRDE6OBULY57NGHZ5PD7UZSYYPB67T7LIVN4EHNKQ4YLZC4CQ";
+        TotpAuthenticator totp = new TotpAuthenticator(secret);
+        Console.WriteLine(totp.GenerateCode());
+
         Console.WriteLine("=== Simplified Mutual TLS MQTT Client ===");
         Console.WriteLine();
+
 
         var factory = new MqttClientFactory();
         var mqttClient = factory.CreateMqttClient();
@@ -89,12 +96,16 @@ class Program
                 await mqttClient.SubscribeAsync("test/topic");
                 Console.WriteLine("Subscribed to test/topic");
 
-                // Send test messages
-                for (int i = 0; i < 3; i++)
-                {
-                    await SendTestMessage(mqttClient, i);
-                    await Task.Delay(2000);
-                }
+                await SendTestMessage(mqttClient, 1);
+
+                //// Send test messages
+                //for (int i = 0; i < 3; i++)
+                //{
+                //    await SendTestMessage(mqttClient, i);
+                //    await Task.Delay(2000);
+                //}
+
+                // Replay("/Users/davidbelle/Projects/uni/attacks/mqtt_replay_data.json", mqttClient);
 
                 Console.WriteLine("Press Enter to disconnect...");
                 Console.ReadKey();
@@ -125,8 +136,8 @@ class Program
         try
         {
             var message = new MqttApplicationMessageBuilder()
-                .WithTopic("test/topic")
-                .WithPayload($"Hello from {_clientId} - Message #{messageNumber} at {DateTime.Now:HH:mm:ss}")
+                .WithTopic("metric/send")
+                .WithPayload("{\"client_id\":\"SEN01\", \"wl\":5, \"fr\":7}")
                 .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce)
                 .Build();
 
@@ -190,5 +201,38 @@ class Program
         }
 
         return certs;
+    }
+
+    static void Replay(string jsonfile, IMqttClient client)
+    {
+        using (StreamReader r = new StreamReader(jsonfile))
+        {
+            string json = r.ReadToEnd();
+            MqttFile file = JsonConvert.DeserializeObject<MqttFile>(json);
+
+            if (file == null || file.mqtt_messages == null )
+            {
+                return;
+            }
+
+            foreach(MqttMessage jsonMessage in file.mqtt_messages )
+            {
+                if (jsonMessage.type != "PUBLISH")
+                {
+                    continue;
+                }
+
+                var mqttMessage = new MqttApplicationMessageBuilder()
+                .WithTopic(jsonMessage.topic)
+                .WithPayload(jsonMessage.payload_text)
+                .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce)
+                .WithRetainFlag(jsonMessage.retain)
+                .Build();
+
+                client.PublishAsync(mqttMessage);
+                    
+            }
+
+        }
     }
 }

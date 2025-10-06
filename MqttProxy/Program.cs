@@ -4,17 +4,50 @@ using MQTTnet;
 using MQTTnet.Server;
 using MQTTnet.Protocol;
 using System.Security.Authentication;
+using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
+using MqttProxy;
+using System;
+using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 
 class Program
 {
     private static List<X509Certificate2> _trustedCAs = new List<X509Certificate2>();
 
+    private static ConcurrentQueue<Audit> audits = new ConcurrentQueue<Audit>();
+
+    private static IConfigurationRoot? configuration;
+
+    private static Dashboard dashboard;
+
     static async Task Main(string[] args)
     {
-        Console.WriteLine("=== Mutual TLS MQTT Broker ===");
-        Console.WriteLine("TLS encryption with server certificate");
-        Console.WriteLine("Client authentication via mutual TLS");
-        Console.WriteLine();
+
+        configuration = new ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+            .Build();
+
+        dashboard = new Dashboard(configuration["Dashboard:url"], configuration["Dashboard:token"]);
+
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        var cancellationToken = new CancellationTokenSource();
+
+        Console.WriteLine("starting timer");
+
+        // Handle Ctrl+C for graceful shutdown
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            cancellationToken.Cancel();
+        };
+
+
+        var timerTask = Task.Run(() => RunStatisticsTimer(cancellationToken.Token));
+
+        Console.WriteLine("start mqtt");
 
         try
         {
@@ -28,13 +61,6 @@ class Program
             // Load trusted CAs for client validation
             _trustedCAs = LoadCertificateChain(certsPath + "ca-chain.crt");
 
-            Console.WriteLine($"Server Certificate: {serverCert.Subject}");
-            Console.WriteLine($"Loaded {_trustedCAs.Count} trusted CAs for client validation:");
-            foreach (var ca in _trustedCAs)
-            {
-                Console.WriteLine($"   - {ca.Subject}");
-            }
-
             var mqttServerFactory = new MqttServerFactory();
 
             // Configure mutual TLS for MQTTnet 5.x
@@ -47,7 +73,6 @@ class Program
 
             var mqttServerOptions = optionsBuilder.Build();
 
-            // CRITICAL: Enable client certificate requirement for mutual TLS
             mqttServerOptions.TlsEndpointOptions.ClientCertificateRequired = true;
             mqttServerOptions.TlsEndpointOptions.CheckCertificateRevocation = false;
 
@@ -56,12 +81,11 @@ class Program
             {
                 if (certificate == null)
                 {
-                    Console.WriteLine("No client certificate provided");
+                    audits.Enqueue(new Audit{ unusual = true, message = "Invalid or missing certificate" });
                     return false;
                 }
 
                 var clientCert = new X509Certificate2(certificate);
-                Console.WriteLine($"Validating client certificate: {clientCert.Subject}");
 
                 return ValidateClientCertificate(clientCert);
             };
@@ -71,31 +95,28 @@ class Program
             // Connection validation with certificate checking
             mqttServer.ValidatingConnectionAsync += async args =>
             {
-                Console.WriteLine($"\nVALIDATING CONNECTION: {args.ClientId} from {args.Endpoint}");
-
                 try
                 {
-                    // For now, allow the connection - we'll validate certificates via client authentication
-                    // In a production setup, you'd check if the client provided a valid certificate
+                    // add some additional authentication check here. 
                     Console.WriteLine("Connection allowed - client certificate validation will occur during message exchange");
+                    audits.Enqueue(new Audit { clientId = args.ClientId, message = "Allowing connection" });
                     args.ReasonCode = MqttConnectReasonCode.Success;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Connection validation error: {ex.Message}");
+                    audits.Enqueue(new Audit{ clientId = args.ClientId, unusual = true, message = $"Connection validation error: {ex.Message}" });
                     args.ReasonCode = MqttConnectReasonCode.NotAuthorized;
                 }
             };
 
             mqttServer.ClientConnectedAsync += async args =>
             {
-                Console.WriteLine($"CLIENT CONNECTED: {args.ClientId} from {args.Endpoint}");
-                Console.WriteLine($"   Authenticated via mutual TLS");
+                audits.Enqueue(new Audit { clientId = args.ClientId, message = "Client connected" });
             };
 
             mqttServer.ClientDisconnectedAsync += async args =>
             {
-                Console.WriteLine($"CLIENT DISCONNECTED: {args.ClientId}");
+                audits.Enqueue(new Audit { clientId = args.ClientId, message = "Client disconnected" });
             };
 
             // Handle regular MQTT messages
@@ -105,24 +126,18 @@ class Program
                 var clientId = args.ClientId;
                 var payload = args.ApplicationMessage.ConvertPayloadToString();
 
-                Console.WriteLine($"MESSAGE from {clientId}: '{payload}' on '{topic}'");
+                audits.Enqueue(new Audit { clientId = args.ClientId, message = "Published on " + topic });
 
-                // All messages are allowed since client is already authenticated via mutual TLS
                 args.ProcessPublish = true;
             };
 
             mqttServer.InterceptingSubscriptionAsync += async args =>
             {
-                Console.WriteLine($"SUBSCRIPTION from {args.ClientId}: {args.TopicFilter.Topic}");
+                audits.Enqueue(new Audit{ clientId = args.ClientId, message = "Subscribed to " + args.TopicFilter.Topic });
                 args.ProcessSubscription = true;
             };
 
             await mqttServer.StartAsync();
-            Console.WriteLine("Mutual TLS Broker started!");
-            Console.WriteLine("   - TLS encryption enabled");
-            Console.WriteLine("   - Client certificate authentication required");
-            Console.WriteLine("   - Listening on port 8883");
-            Console.WriteLine();
 
             Console.WriteLine("Press Enter to stop broker...");
             Console.ReadLine();
@@ -132,6 +147,7 @@ class Program
         }
         catch (Exception ex)
         {
+
             Console.WriteLine($"Broker error: {ex.Message}");
             if (ex.InnerException != null)
             {
@@ -144,14 +160,12 @@ class Program
     {
         try
         {
-            Console.WriteLine($"   Certificate: {clientCert.Subject}");
-            Console.WriteLine($"   Issued by: {clientCert.Issuer}");
-            Console.WriteLine($"   Valid: {clientCert.NotBefore} to {clientCert.NotAfter}");
 
             // Check certificate validity period
             if (DateTime.Now < clientCert.NotBefore || DateTime.Now > clientCert.NotAfter)
             {
                 Console.WriteLine($"   Certificate expired or not yet valid");
+                audits.Enqueue(new Audit { clientId = clientCert.Subject, unusual = true, message = "Certificate expired or not yet valid" });
                 return false;
             }
 
@@ -171,48 +185,19 @@ class Program
 
             if (isValid)
             {
-                Console.WriteLine($"   Certificate chain validation successful");
-
-                // Print the validated chain
-                Console.WriteLine($"   Certificate chain:");
-                for (int i = 0; i < chain.ChainElements.Count; i++)
-                {
-                    var element = chain.ChainElements[i];
-                    string certType = i == 0 ? "Client" :
-                                     i == chain.ChainElements.Count - 1 ? "Root CA" :
-                                     "Intermediate CA";
-                    Console.WriteLine($"      {i}: {certType} - {element.Certificate.Subject}");
-                }
+                audits.Enqueue(new Audit { clientId = clientCert.Subject, message = "Valid certificate" });
             }
             else
             {
                 Console.WriteLine($"   Certificate chain validation failed:");
-                foreach (var status in chain.ChainStatus)
-                {
-                    Console.WriteLine($"      - {status.Status}: {status.StatusInformation}");
-                }
-
-                // Print the chain for debugging
-                Console.WriteLine($"   Certificate chain (invalid):");
-                for (int i = 0; i < chain.ChainElements.Count; i++)
-                {
-                    var element = chain.ChainElements[i];
-                    Console.WriteLine($"      {i}: {element.Certificate.Subject}");
-                    if (element.ChainElementStatus.Length > 0)
-                    {
-                        foreach (var status in element.ChainElementStatus)
-                        {
-                            Console.WriteLine($"         Error: {status.Status} - {status.StatusInformation}");
-                        }
-                    }
-                }
+                audits.Enqueue(new Audit { clientId = clientCert.Subject, unusual = true, message = "Certificate chain validation failed" });
             }
 
             return isValid;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"   Certificate validation error: {ex.Message}");
+            audits.Enqueue(new Audit { clientId = clientCert.Subject, unusual = true, message = $"Certificate validation error: {ex.Message}" });
             return false;
         }
     }
@@ -226,18 +211,16 @@ class Program
             var chainContent = File.ReadAllText(chainFilePath);
             var certStrings = SplitPemCertificates(chainContent);
 
-            Console.WriteLine($"Found {certStrings.Count} certificates in chain file");
-
             foreach (var certString in certStrings)
             {
                 var cert = new X509Certificate2(Encoding.UTF8.GetBytes(certString));
                 certs.Add(cert);
-                Console.WriteLine($"   - Loaded: {cert.Subject}");
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error loading certificate chain: {ex.Message}");
+            audits.Enqueue(new Audit { unusual = true, message = $"Error loading certificate chain: {ex.Message}" });
         }
 
         return certs;
@@ -271,5 +254,36 @@ class Program
         }
 
         return certs;
+    }
+
+    static async Task RunStatisticsTimer(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await ReportStatistics();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Console.WriteLine("Timer stopped.");
+        }
+    }
+
+    static async Task ReportStatistics()
+    {
+        var currentAudits = new List<Audit>();
+
+        // Dequeue all current items
+        while (audits.TryDequeue(out var audit))
+        {
+            currentAudits.Add(audit);
+        }
+
+        await dashboard.SendStatistics(currentAudits);
+
     }
 }

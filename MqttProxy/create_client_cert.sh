@@ -43,7 +43,7 @@ openssl pkcs12 -export -out ${CERT_DIR}/${CLIENT_NAME}.pfx \
     -inkey ${CERT_DIR}/${CLIENT_NAME}.key \
     -in ${CERT_DIR}/${CLIENT_NAME}.crt \
     -certfile ${CERT_DIR}/ca-chain.crt \
-    -name "${CLIENT_NAME}"
+    -name "${   }"
 
 # Clean up CSR
 rm ${CERT_DIR}/${CLIENT_NAME}.csr

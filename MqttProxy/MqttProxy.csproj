@@ -11,11 +11,19 @@
     <PackageReference Include="MQTTnet" Version="5.0.1.1416" />
     <PackageReference Include="MQTTnet.Server" Version="5.0.1.1416" />
     <PackageReference Include="System.Management" Version="8.0.0" />
+    <PackageReference Include="System.Collections.Concurrent" Version="4.3.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="9.0.9" />
   </ItemGroup>
   <ItemGroup>
     <None Remove="certs\" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="certs\" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 </Project>
