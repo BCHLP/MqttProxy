@@ -17,9 +17,11 @@
   </ItemGroup>
   <ItemGroup>
     <None Remove="certs\" />
+    <None Remove="certs\old\" />
   </ItemGroup>
   <ItemGroup>
     <Folder Include="certs\" />
+    <Folder Include="certs\old\" />
   </ItemGroup>
   <ItemGroup>
     <None Update="appsettings.json">

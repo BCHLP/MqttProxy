@@ -2,7 +2,7 @@
 
 This guide explains how to create a complete Public Key Infrastructure (PKI) for secure MQTT communications using a Root CA and Intermediate CA structure.
 
-## 📋 Overview
+## Overview
 
 This setup creates a three-tier certificate hierarchy:
 
@@ -13,13 +13,13 @@ Root CA (Self-signed, kept offline/secure)
         └── Client Certificates (created via script)
 ```
 
-## 🔧 Prerequisites
+## Prerequisites
 
 - OpenSSL installed on your system
 - Basic understanding of PKI concepts
 - Directory to store certificates (e.g., `certs/`)
 
-## 📁 Directory Structure
+## Directory Structure
 
 After completing this guide, you'll have:
 
@@ -36,11 +36,11 @@ certs/
 └── ... (client certificates created via script)
 ```
 
-## 🚀 Step 1: Create Root Certificate Authority (CA)
+## Step 1: Create Root Certificate Authority (CA)
 
 The Root CA is the foundation of your PKI. Keep the private key extremely secure!
 
-```bash
+
 # Create certificates directory
 mkdir -p certs
 cd certs
@@ -50,19 +50,21 @@ openssl genrsa -out ca.key 4096
 
 # 2. Create Root CA certificate (valid for 10 years)
 openssl req -new -x509 -days 3650 -key ca.key -out ca.crt \
-    -subj "/C=US/ST=YourState/L=YourCity/O=YourOrg/CN=MQTT-Root-CA"
-```
+    -sha384 \
+    -subj "/C=US/ST=YourState/L=YourCity/O=YourOrg/CN=MQTT-Root-CA"\
+    -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign"
 
-**⚠️ Security Note**: The `ca.key` file is extremely sensitive. In production:
+
+** Security Note**: The `ca.key` file is extremely sensitive. In production:
 - Store it offline or in a Hardware Security Module (HSM)
 - Use strong file permissions: `chmod 400 ca.key`
 - Consider encrypting it with a passphrase
 
-## 🔗 Step 2: Create Intermediate Certificate Authority
+## Step 2: Create Intermediate Certificate Authority
 
 The Intermediate CA will handle day-to-day certificate signing:
 
-```bash
 # 1. Generate Intermediate CA private key
 openssl genrsa -out intermediate-ca.key 4096
 
@@ -72,33 +74,36 @@ openssl req -new -key intermediate-ca.key -out intermediate-ca.csr \
 
 # 3. Sign Intermediate CA certificate with Root CA (valid for 5 years)
 openssl x509 -req -in intermediate-ca.csr -CA ca.crt -CAkey ca.key \
-    -CAcreateserial -out intermediate-ca.crt -days 1825 \
-    -extensions v3_ca -extfile <(echo "basicConstraints=CA:true,pathlen:0
-keyUsage=keyCertSign,cRLSign")
+    -CAcreateserial -out intermediate-ca.crt -days 1825 -sha384 \
+    -extfile <(printf "basicConstraints=critical,CA:true,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign") 
 
 # 4. Create certificate chain file (Intermediate + Root)
 cat intermediate-ca.crt ca.crt > ca-chain.crt
 
 # 5. Clean up CSR file
 rm intermediate-ca.csr
-```
 
-## 🖥️ Step 3: Create MQTT Broker Certificate
+## Step 3: Create MQTT Broker Certificate
 
 Create the server certificate for your MQTT broker:
 
-```bash
 # 1. Generate broker private key
-openssl genrsa -out mqtt-broker.key 2048
+openssl genrsa -out mqtt-broker.key 4096
 
 # 2. Create broker Certificate Signing Request
-# IMPORTANT: Replace "localhost" with your actual broker hostname/IP
 openssl req -new -key mqtt-broker.key -out mqtt-broker.csr \
-    -subj "/C=US/ST=YourState/L=YourCity/O=YourOrg/CN=localhost"
+   -subj "/C=US/ST=YourState/L=YourCity/O=YourOrg/CN=broker.bchklp.com" \
+   -addext "subjectAltName=DNS:broker.bchklp.com"
 
-# 3. Sign broker certificate with Intermediate CA (valid for 1 year)
-openssl x509 -req -in mqtt-broker.csr -CA intermediate-ca.crt -CAkey intermediate-ca.key \
-    -CAcreateserial -out mqtt-broker.crt -days 365
+# 3. Sign broker certificate with Intermediate CA (including SAN)
+openssl x509 -req -in mqtt-broker.csr \
+    -CA intermediate-ca.crt \
+    -CAkey intermediate-ca.key \
+    -CAcreateserial \
+    -out mqtt-broker.crt \
+    -days 365 \
+    -sha384 \
+    -extfile <(printf "subjectAltName=DNS:broker.bchklp.com\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth")
 
 # 4. Create broker PFX bundle (includes full certificate chain)
 openssl pkcs12 -export -out mqtt-broker.pfx \
@@ -109,11 +114,10 @@ openssl pkcs12 -export -out mqtt-broker.pfx \
 
 # 5. Clean up CSR file
 rm mqtt-broker.csr
-```
 
-**📝 Note**: When prompted for PFX password, press Enter for no password (or set a password and update your broker code accordingly).
+** Note **: When prompted for PFX password, press Enter for no password (or set a password and update your broker code accordingly).
 
-## ✅ Step 4: Verify Certificate Chain
+## Step 4: Verify Certificate Chain
 
 Verify that your certificates are properly signed:
 
@@ -132,7 +136,7 @@ openssl x509 -in mqtt-broker.crt -text -noout | grep -A2 "Subject:"
 
 Expected output should show successful verification and proper subject names.
 
-## 🔒 Step 5: Secure Your Private Keys
+## Step 5: Secure Your Private Keys
 
 Set appropriate file permissions to protect private keys:
 
@@ -147,7 +151,7 @@ chmod 444 ca.crt intermediate-ca.crt mqtt-broker.crt ca-chain.crt
 chmod 444 mqtt-broker.pfx
 ```
 
-## 📋 Step 6: Certificate Information Summary
+## Step 6: Certificate Information Summary
 
 After completing these steps, you can view your certificate information:
 
@@ -165,7 +169,7 @@ echo "=== PFX Contents ==="
 openssl pkcs12 -in mqtt-broker.pfx -nokeys -info
 ```
 
-## 🔧 Configuration Notes
+## Configuration Notes
 
 ### Customizing Certificate Fields
 
@@ -193,7 +197,7 @@ Recommended certificate lifetimes:
 - **Intermediate CA**: 5 years (1825 days) - changed occasionally
 - **Server/Client certificates**: 1 year (365 days) - renewed regularly
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### "certificate verify failed" errors
 
@@ -218,7 +222,7 @@ openssl pkcs12 -export -out mqtt-broker.pfx \
     -inkey mqtt-broker.key -in mqtt-broker.crt -certfile ca-chain.crt
 ```
 
-## 🔄 Certificate Renewal
+## Certificate Renewal
 
 When certificates near expiration:
 
@@ -240,7 +244,7 @@ openssl pkcs12 -export -out mqtt-broker.pfx \
 ### Renewing Intermediate CA
 This is more complex and requires updating all certificates signed by the intermediate CA.
 
-## 📚 Next Steps
+## Next Steps
 
 1. **Create client certificates**: Use the `create_client_with_intermediate.sh` script
 2. **Configure MQTT broker**: Load the `mqtt-broker.pfx` file in your broker
@@ -248,7 +252,7 @@ This is more complex and requires updating all certificates signed by the interm
 4. **Backup certificates**: Store copies securely, especially private keys
 5. **Set up renewal procedures**: Plan for certificate lifecycle management
 
-## 🔐 Security Best Practices
+## Security Best Practices
 
 - **Never share private keys** (`.key` files)
 - **Backup your Root CA key securely** - losing it means recreating entire PKI
@@ -258,7 +262,7 @@ This is more complex and requires updating all certificates signed by the interm
 - **Monitor certificate expiration dates**
 - **Keep Root CA offline** when not needed for signing
 
-## 📄 File Distribution
+## File Distribution
 
 **To MQTT broker**:
 - `mqtt-broker.pfx` (server certificate with private key)

@@ -24,6 +24,9 @@ class Program
         var mqttClient = factory.CreateMqttClient();
 
         string certsPath = "../../../certs/";
+        string certName = "bchklp.pfx";
+        string mqttHost = "broker.bchklp.com";
+        int mqttPort = 8883;
 
         try
         {
@@ -32,14 +35,14 @@ class Program
             Console.WriteLine($"Loaded {caCerts.Count} CA certificates for server validation");
 
             // Load our client certificate for mutual TLS
-            var clientCert = new X509Certificate2(certsPath + "macbookpro.pfx", "",
+            var clientCert = new X509Certificate2(certsPath + certName, "",
                 X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
             Console.WriteLine($"Client Certificate: {clientCert.Subject}");
             Console.WriteLine($"Has Private Key: {clientCert.HasPrivateKey}");
 
             // Create connection options using the correct MQTTnet 5.x API
             var options = new MqttClientOptionsBuilder()
-                .WithTcpServer("localhost", 8883)
+                .WithTcpServer(mqttHost, mqttPort)
                 .WithClientId(_clientId)
                 .WithCleanSession()
                 .WithTlsOptions(opts =>

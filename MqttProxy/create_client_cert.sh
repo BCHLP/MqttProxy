@@ -27,29 +27,37 @@ fi
 
 echo "Creating client certificate for: $CLIENT_NAME (signed by Intermediate CA)"
 
-# 1. Generate client private key
-openssl genrsa -out ${CERT_DIR}/${CLIENT_NAME}.key 2048
 
-# 2. Create certificate signing request
+# 1. Generate broker private key
+openssl genrsa -out ${CERT_DIR}/${CLIENT_NAME}.key 4096
+
+# 2. Create broker Certificate Signing Request
 openssl req -new -key ${CERT_DIR}/${CLIENT_NAME}.key -out ${CERT_DIR}/${CLIENT_NAME}.csr \
-    -subj "/C=US/ST=YourState/L=YourCity/O=YourOrg/CN=${CLIENT_NAME}"
+   -subj "/C=US/ST=YourState/L=YourCity/O=YourOrg/CN=${CLIENT_NAME}" \
+   -addext "subjectAltName=DNS:${CLIENT_NAME}"
 
-# 3. Sign with INTERMEDIATE CA (not root CA)
-openssl x509 -req -in ${CERT_DIR}/${CLIENT_NAME}.csr -CA ${CERT_DIR}/intermediate-ca.crt -CAkey ${CERT_DIR}/intermediate-ca.key \
-    -CAcreateserial -out ${CERT_DIR}/${CLIENT_NAME}.crt -days 365
+# 3. Sign broker certificate with Intermediate CA (including SAN)
+openssl x509 -req -in ${CERT_DIR}/${CLIENT_NAME}.csr \
+    -CA ${CERT_DIR}/intermediate-ca.crt \
+    -CAkey ${CERT_DIR}/intermediate-ca.key \
+    -CAcreateserial \
+    -out ${CERT_DIR}/${CLIENT_NAME}.crt \
+    -days 365 \
+    -sha384 \
+    -extfile <(printf "subjectAltName=DNS:${CLIENT_NAME}\nbasicConstraints=CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth")
 
-# 4. Create PFX with full certificate chain
+# 4. Create broker PFX bundle (includes full certificate chain)
 openssl pkcs12 -export -out ${CERT_DIR}/${CLIENT_NAME}.pfx \
     -inkey ${CERT_DIR}/${CLIENT_NAME}.key \
     -in ${CERT_DIR}/${CLIENT_NAME}.crt \
     -certfile ${CERT_DIR}/ca-chain.crt \
-    -name "${   }"
+    -name "${CLIENT_NAME}"
 
 # Clean up CSR
 rm ${CERT_DIR}/${CLIENT_NAME}.csr
 
 if [ $? -eq 0 ]; then
-    echo "✅ Success! Created certificates for $CLIENT_NAME:"
+    echo " Success! Created certificates for $CLIENT_NAME:"
     echo "  - ${CLIENT_NAME}.key (private key)"
     echo "  - ${CLIENT_NAME}.crt (certificate - signed by Intermediate CA)"
     echo "  - ${CLIENT_NAME}.pfx (PFX with full certificate chain)"
@@ -60,6 +68,6 @@ if [ $? -eq 0 ]; then
     echo "  - ca-chain.crt (for server validation)"
     echo "  - ${CLIENT_NAME}.pfx (for client authentication)"
 else
-    echo "❌ Failed to create certificate"
+    echo " Failed to create certificate"
     exit 1
 fi

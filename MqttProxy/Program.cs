@@ -30,6 +30,24 @@ class Program
             .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
             .Build();
 
+        string ?certificatePath = configuration["Certificate"];
+        string ?caChainPath = configuration["CaChain"];
+
+        // Validate paths exist
+        if (!File.Exists(certificatePath))
+        {
+            Console.WriteLine($"Certificate file not found: {certificatePath}");
+            return;
+        }
+
+        if (!File.Exists(caChainPath))
+        {
+            Console.WriteLine($"CA chain file not found: {caChainPath}");
+            return;
+        }
+
+
+
         dashboard = new Dashboard(configuration["Dashboard:url"], configuration["Dashboard:token"]);
 
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
@@ -51,15 +69,13 @@ class Program
 
         try
         {
-            // Use consistent relative path (same as client)
-            string certsPath = "../../../certs/";
 
             // Load server certificate
-            var serverCert = new X509Certificate2(certsPath + "mqtt-broker.pfx", "",
+            var serverCert = new X509Certificate2(certificatePath, "",
                 X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
 
             // Load trusted CAs for client validation
-            _trustedCAs = LoadCertificateChain(certsPath + "ca-chain.crt");
+            _trustedCAs = LoadCertificateChain(caChainPath);
 
             var mqttServerFactory = new MqttServerFactory();
 
