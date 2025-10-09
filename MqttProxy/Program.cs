@@ -50,20 +50,20 @@ class Program
 
         dashboard = new Dashboard(configuration["Dashboard:url"], configuration["Dashboard:token"]);
 
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
-        var cancellationToken = new CancellationTokenSource();
+        //using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        //var cancellationToken = new CancellationTokenSource();
 
-        Console.WriteLine("starting timer");
+        //Console.WriteLine("starting timer");
 
-        // Handle Ctrl+C for graceful shutdown
-        Console.CancelKeyPress += (_, e) =>
-        {
-            e.Cancel = true;
-            cancellationToken.Cancel();
-        };
+        //// Handle Ctrl+C for graceful shutdown
+        //Console.CancelKeyPress += (_, e) =>
+        //{
+        //    e.Cancel = true;
+        //    cancellationToken.Cancel();
+        //};
 
 
-        var timerTask = Task.Run(() => RunStatisticsTimer(cancellationToken.Token));
+        //var timerTask = Task.Run(() => RunStatisticsTimer(cancellationToken.Token));
 
         Console.WriteLine("start mqtt");
 

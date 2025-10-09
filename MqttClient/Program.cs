@@ -25,7 +25,7 @@ class Program
 
         string certsPath = "../../../certs/";
         string certName = "bchklp.pfx";
-        string mqttHost = "broker.bchklp.com";
+        string mqttHost = "bchklp.com";
         int mqttPort = 8883;
 
         try
