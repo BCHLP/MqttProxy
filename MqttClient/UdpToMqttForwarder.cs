@@ -161,8 +161,9 @@ namespace MqttClient
                     .WithRetainFlag(retain)
                     .Build();
 
+                Console.WriteLine($"About to forwards MQTT - Topic: {topic}");
                 await _mqttClient.PublishAsync(mqttMessage);
-                Console.WriteLine($"Forwarded to MQTT - Topic: {topic}, Payload: {messagePayload.Substring(0, Math.Min(100, messagePayload.Length))}...");
+                Console.WriteLine($"Forwarded to MQTT - Topic: {topic}");
 
 
 
