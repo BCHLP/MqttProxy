@@ -18,13 +18,15 @@ namespace MqttClient
         private UdpClient? _udpSender;
         private CancellationTokenSource? _cancellationTokenSource;
         private Task? _listenerTask;
+        private string _clientId;
 
-        public UdpToMqttForwarder(int udpListenPort, int udpSendPort, string udpSendHost, IMqttClient mqttClient)
+        public UdpToMqttForwarder(int udpListenPort, int udpSendPort, string udpSendHost, IMqttClient mqttClient, string clientId)
         {
             _udpListenPort = udpListenPort;
             _udpSendPort = udpSendPort;
             _udpSendHost = udpSendHost;
             _mqttClient = mqttClient;
+            _clientId = clientId;
         }
 
         public void Start()
@@ -115,7 +117,8 @@ namespace MqttClient
 
                 // Extract topic and message payload
                 // Default topic if not specified
-                string topic = jsonObject["topic"]?.ToString() ?? $"udp/{remoteEndPoint.Address}";
+                // string topic = jsonObject["topic"]?.ToString() ?? $"udp/{remoteEndPoint.Address}";
+                string topic = "application/1/device/"+_clientId+"/command/up";
 
                 // If the JSON has a 'payload' or 'message' field, use that, otherwise use the entire JSON
                 string messagePayload;
@@ -194,19 +197,20 @@ namespace MqttClient
                 }
 
                 // Create JSON wrapper for the MQTT message
-                var jsonMessage = new JObject
-                {
-                    ["topic"] = topic,
-                    ["payload"] = Encoding.UTF8.GetString(payload),
-                    ["qos"] = qos,
-                    ["retain"] = retain,
-                    ["timestamp"] = DateTime.UtcNow.ToString("O")
-                };
+                //var jsonMessage = new JObject
+                //{
+                //    ["topic"] = topic,
+                //    ["payload"] = Encoding.UTF8.GetString(payload),
+                //    ["qos"] = qos,
+                //    ["retain"] = retain,
+                //    ["timestamp"] = DateTime.UtcNow.ToString("O")
+                //};
+                // var payloadString = Encoding.UTF8.GetString(payload),
 
-                var jsonString = jsonMessage.ToString(Formatting.None);
-                var udpPayload = Encoding.UTF8.GetBytes(jsonString);
+                // var jsonString = jsonMessage.ToString(Formatting.None);
+                // var udpPayload = Encoding.UTF8.GetBytes(jsonString);
 
-                await _udpSender.SendAsync(udpPayload, udpPayload.Length, _udpSendHost, _udpSendPort);
+                await _udpSender.SendAsync(payload, payload.Length, _udpSendHost, _udpSendPort);
                 Console.WriteLine($"Forwarded to UDP {_udpSendHost}:{_udpSendPort} - Topic: {topic}");
             }
             catch (Exception ex)

@@ -125,7 +125,7 @@ class Program
                 // Replay("/Users/davidbelle/Projects/uni/attacks/mqtt_replay_data.json", mqttClient);
 
                 // Start UDP to MQTT forwarder
-                var udpForwarder = new UdpToMqttForwarder(UdpListenPort, UdpSendPort, UdpSendHost, mqttClient);
+                var udpForwarder = new UdpToMqttForwarder(UdpListenPort, UdpSendPort, UdpSendHost, mqttClient, ClientId);
                 udpForwarder.Start();
 
                 // Set up message handler to forward MQTT messages to UDP
