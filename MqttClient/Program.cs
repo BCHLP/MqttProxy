@@ -1,49 +1,71 @@
-﻿using System.Security.Authentication;
+﻿using System.Buffers;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using Newtonsoft.Json;
 using MQTTnet;
 using MQTTnet.Protocol;
 using MqttClient;
+using Microsoft.Extensions.Configuration;
 
 class Program
 {
-    private static string _clientId = "macbookpro";
+    private static IConfigurationRoot? configuration;
 
     static async Task Main(string[] args)
     {
-        string secret = "XTCRRDE6OBULY57NGHZ5PD7UZSYYPB67T7LIVN4EHNKQ4YLZC4CQ";
-        TotpAuthenticator totp = new TotpAuthenticator(secret);
-        Console.WriteLine(totp.GenerateCode());
 
-        Console.WriteLine("=== Simplified Mutual TLS MQTT Client ===");
-        Console.WriteLine();
+        configuration = new ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+            .Build();
+
+        string? certificatePath = configuration["Certificate"];
+        string? caChainPath = configuration["CaChain"];
+
+        // Validate paths exist
+        if (!File.Exists(certificatePath))
+        {
+            Console.WriteLine($"Certificate file not found: {certificatePath}");
+            return;
+        }
+
+        if (!File.Exists(caChainPath))
+        {
+            Console.WriteLine($"CA chain file not found: {caChainPath}");
+            return;
+        }
 
 
         var factory = new MqttClientFactory();
         var mqttClient = factory.CreateMqttClient();
 
-        string certsPath = "../../../certs/";
-        string certName = "bchklp.pfx";
-        string mqttHost = "bchklp.com";
-        int mqttPort = 8883;
-
+        string Certificate = configuration["Certificate"] ?? "";
+        string CaChain = configuration["CaChain"] ?? "";
+        string MqttHost = configuration["Broker"] ?? "";
+        string ClientId = configuration["ClientId"] ?? "";
+        string UdpSendHost = configuration["SenderIp"] ?? "localhost";
+        int UdpListenPort = 1700;
+        int.TryParse(configuration["ListenerPort"], out UdpListenPort);
+        int UdpSendPort = 1705;
+        int.TryParse(configuration["SenderPort"], out UdpSendPort);
+        
         try
         {
             // Load CA chain for server validation
-            var caCerts = LoadCertificateChain(certsPath + "ca-chain.crt");
+            var caCerts = LoadCertificateChain(CaChain);
             Console.WriteLine($"Loaded {caCerts.Count} CA certificates for server validation");
 
             // Load our client certificate for mutual TLS
-            var clientCert = new X509Certificate2(certsPath + certName, "",
+            var clientCert = new X509Certificate2(Certificate, "",
                 X509KeyStorageFlags.Exportable | X509KeyStorageFlags.PersistKeySet);
             Console.WriteLine($"Client Certificate: {clientCert.Subject}");
             Console.WriteLine($"Has Private Key: {clientCert.HasPrivateKey}");
 
             // Create connection options using the correct MQTTnet 5.x API
             var options = new MqttClientOptionsBuilder()
-                .WithTcpServer(mqttHost, mqttPort)
-                .WithClientId(_clientId)
+                .WithTcpServer(MqttHost, 8883)
+                .WithClientId(ClientId)
                 .WithCleanSession()
                 .WithTlsOptions(opts =>
                 {
@@ -80,14 +102,6 @@ class Program
                 })
                 .Build();
 
-            // Set up message handler
-            mqttClient.ApplicationMessageReceivedAsync += async e =>
-            {
-                var topic = e.ApplicationMessage.Topic;
-                var message = Encoding.UTF8.GetString(e.ApplicationMessage.Payload);
-                Console.WriteLine($"Received: {message} on topic: {topic}");
-            };
-
             Console.WriteLine("Connecting to broker with mutual TLS...");
             var result = await mqttClient.ConnectAsync(options, CancellationToken.None);
 
@@ -110,8 +124,44 @@ class Program
 
                 // Replay("/Users/davidbelle/Projects/uni/attacks/mqtt_replay_data.json", mqttClient);
 
+                // Start UDP to MQTT forwarder
+                var udpForwarder = new UdpToMqttForwarder(UdpListenPort, UdpSendPort, UdpSendHost, mqttClient);
+                udpForwarder.Start();
+
+                // Set up message handler to forward MQTT messages to UDP
+                mqttClient.ApplicationMessageReceivedAsync += async e =>
+                {
+                    var topic = e.ApplicationMessage.Topic;
+
+                    // Convert ReadOnlySequence<byte> to byte[]
+                    byte[] payloadBytes;
+                    if (e.ApplicationMessage.Payload.IsSingleSegment)
+                    {
+                        payloadBytes = e.ApplicationMessage.Payload.FirstSpan.ToArray();
+                    }
+                    else
+                    {
+                        payloadBytes = new byte[e.ApplicationMessage.Payload.Length];
+                        e.ApplicationMessage.Payload.CopyTo(payloadBytes);
+                    }
+
+                    var message = Encoding.UTF8.GetString(payloadBytes);
+                    Console.WriteLine($"Received MQTT: {message} on topic: {topic}");
+
+                    // Forward to UDP
+                    await udpForwarder.SendMqttMessageToUdp(
+                        topic,
+                        payloadBytes,
+                        (int)e.ApplicationMessage.QualityOfServiceLevel,
+                        e.ApplicationMessage.Retain
+                    );
+                };
+
                 Console.WriteLine("Press Enter to disconnect...");
                 Console.ReadKey();
+
+                // Stop UDP listener before disconnecting
+                await udpForwarder.Stop();
 
                 await mqttClient.DisconnectAsync();
             }
@@ -204,38 +254,5 @@ class Program
         }
 
         return certs;
-    }
-
-    static void Replay(string jsonfile, IMqttClient client)
-    {
-        using (StreamReader r = new StreamReader(jsonfile))
-        {
-            string json = r.ReadToEnd();
-            MqttFile file = JsonConvert.DeserializeObject<MqttFile>(json);
-
-            if (file == null || file.mqtt_messages == null )
-            {
-                return;
-            }
-
-            foreach(MqttMessage jsonMessage in file.mqtt_messages )
-            {
-                if (jsonMessage.type != "PUBLISH")
-                {
-                    continue;
-                }
-
-                var mqttMessage = new MqttApplicationMessageBuilder()
-                .WithTopic(jsonMessage.topic)
-                .WithPayload(jsonMessage.payload_text)
-                .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtMostOnce)
-                .WithRetainFlag(jsonMessage.retain)
-                .Build();
-
-                client.PublishAsync(mqttMessage);
-                    
-            }
-
-        }
     }
 }
